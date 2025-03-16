@@ -4,45 +4,94 @@ import { RichText } from "@atproto/api";
 
 const router = express.Router();
 
-const agent = new AtpAgent({
-  service: "https://bsky.social",
-  persistSession: (evt, sess) => {
-    if (evt === "create") {
-      require("fs").writeFileSync("session.json", JSON.stringify(sess));
-    }
-  },
-});
+router.post("/create", async (req: Request, res: Response): Promise<any> => {
+  const { text, refreshJwt, did, handle } = req.body;
+  const authHeader = req.headers.authorization;
+  const token = authHeader?.split(" ")[1];
 
-router.post("/create", async (req: Request, res: Response) => {
-  const { text } = req.body;
+  if (!token) {
+    return res.status(400).json({ message: "Missing authorization token" });
+  }
+
   try {
+    const agent = new AtpAgent({
+      service: "https://bsky.social",
+    });
+
+    const session = await agent.resumeSession({
+      accessJwt: token,
+      refreshJwt,
+      did,
+      handle,
+      active: true,
+    });
+
+    if (!session || !agent.session) {
+      return res
+        .status(500)
+        .json({ message: "Session not initialized or invalid" });
+    }
+
     const rt = new RichText({ text });
     await rt.detectFacets(agent);
 
-    const params = {
-      repo: "your_repo_identifier",
-    };
-
-    const record = {
-      $type: "app.bsky.feed.post",
+    const postObject = {
       text: rt.text,
-      facets: rt.facets,
       createdAt: new Date().toISOString(),
     };
 
-    await agent.app.bsky.feed.post.create(params, record);
-    res.json({ message: "post successfully", record });
+    const result = await agent.app.bsky.feed.post.create(
+      { repo: agent.session.did },
+      postObject
+    );
+
+    res.json({
+      message: "Post successful",
+      uri: result.uri,
+      cid: result.cid,
+    });
   } catch (error) {
-    res.status(500).json({ message: "post failed", error });
+    res.status(500).json({ message: "Post failed", error });
   }
 });
 
-router.get("/timeline", async (req: Request, res: Response) => {
+router.get("/timeline", async (req: Request, res: Response): Promise<any> => {
+  const { refreshJwt, did, handle } = req.body;
+  const authHeader = req.headers.authorization;
+  if (!authHeader || !authHeader.startsWith("Bearer ")) {
+    return res
+      .status(401)
+      .json({ message: "Missing or invalid authorization header" });
+  }
+
+  const token = authHeader.split(" ")[1];
+
+  if (!token) {
+    return res.status(400).json({ message: "Missing authorization token" });
+  }
+
   try {
-    const timeline = await agent.getTimeline({ limit: 10 });
-    res.json({ timeline });
+    const agent = new AtpAgent({
+      service: "https://bsky.social",
+    });
+
+    const session = await agent.resumeSession({
+      accessJwt: token,
+      refreshJwt,
+      did,
+      handle,
+      active: true,
+    });
+
+    if (!session || !agent.session) {
+      return res.status(500).json({ message: "Session not initialized" });
+    }
+
+    const timeline = await agent.app.bsky.feed.getTimeline({ limit: 10 });
+    res.json({ timeline: timeline.data });
   } catch (error) {
-    res.status(500).json({ message: "get timeline failed", error });
+    console.error("Timeline error:", error);
+    res.status(500).json({ message: "Get timeline failed", error });
   }
 });
 

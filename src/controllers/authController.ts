@@ -1,28 +1,37 @@
 import express, { Request, Response } from "express";
-import { AtpAgent, AtpSessionEvent } from "@atproto/api";
+import { AtpAgent } from "@atproto/api";
 
 const router = express.Router();
 
-const agent = new AtpAgent({
-  service: "https://bsky.social",
-  persistSession: (evt: AtpSessionEvent, sess) => {
-    if (evt === "create") {
-      require("fs").writeFileSync("session.json", JSON.stringify(sess));
-    }
-  },
-});
-
-router.post("/login", async (req: Request, res: Response) => {
+router.post("/login", async (req: Request, res: Response): Promise<any> => {
   const { identifier, password } = req.body;
+
+  if (!identifier || !password) {
+    res.status(400).json({ message: "Identifier and password are required" });
+    return;
+  }
+
   try {
-    const session = await agent.login({
-      identifier,
-      password,
+    const agent = new AtpAgent({
+      service: "https://bsky.social",
     });
-    console.log("session", session);
-    res.json({ message: "login successfully", headers: session.headers });
+
+    await agent.login({ identifier, password });
+
+    if (!agent.session) {
+      throw new Error("Login successful but session not created");
+    }
+
+    res.json({
+      message: "Login successful",
+      accessJwt: agent.session.accessJwt,
+      refreshJwt: agent.session.refreshJwt,
+      did: agent.session.did,
+      handle: agent.session.handle,
+    });
   } catch (error) {
-    res.status(500).json({ message: "login failed", error });
+    console.error("Login error:", error);
+    res.status(401).json({ message: "Login failed", error });
   }
 });
 
